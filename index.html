@@ -1019,14 +1019,20 @@ function aiErr(e) {
   return c === 'cancelled' ? '' : c === 'not_granted' || c === 'sampling_disabled' ? 'Claude 사용이 허용되지 않아 AI 분석을 쓸 수 없습니다.' : c === 'rate_limited' ? '요청이 많습니다. 잠시 뒤 다시 눌러 주세요.'
     : c === 'invalid_json' ? '결과 형식을 읽지 못했습니다. 다시 눌러 주세요.' : c === 'session_expired' ? 'claude.ai 에 다시 로그인해 주세요.' : '분석 중 문제가 생겼습니다. 다시 시도해 주세요.';
 }
+function coDiag() {   // 계정 사업자가 안 보일 때 원인을 바로 알 수 있게
+  if (!window.claude) return '';
+  const login = ADM.noLogin ? '<span class="tag bad">로그인 안 됨</span>' : ADM.ready ? '<span class="tag ok">로그인됨</span>' : '<span class="tag">확인 중</span>';
+  const store = CO_SYNC.err ? `<span class="tag bad">${h(CO_SYNC.err)}</span>` : CO_SYNC.loaded ? `<span class="tag ok">계정 사업자 ${CO_SYNC.docs.length}곳 읽음</span>` : ADM.ready ? '<span class="tag">저장소 읽는 중</span>' : '';
+  return `<div class="notice flex between"><span>${login} ${store}${READONLY ? ' <span class="tag">열람 전용</span>' : ''}</span>${(CO_SYNC.err || ADM.noLogin) ? '<button class="btn" data-perm="1">권한 설정 열기</button>' : ''}</div>`;
+}
 function viewCo() {
   const c = D.company, r = CUSTOM && D.research && D.research.name === c.name ? D.research : null, an = r && r.analysis;
   const cat = D.catalog, el = cat.filter(p => p.verdict === '신청 가능').sort((a, b) => b.score - a.score), ck = cat.filter(p => p.verdict === '확인 필요');
   if (READONLY) return `<h1>기업</h1><div class="sub">열람 전용 — 계정에 저장된 사업자 ${COS.list.length}곳. 사업자를 골라 그 기준으로 추천을 봅니다. 수정·추가는 참여(Contributor) 권한부터.</div>
-    ${CO_SYNC.err ? `<div class="notice">${h(CO_SYNC.err)}</div>` : ''}
+    ${coDiag()}
     ${COS.list.map(companyCard).join('') || '<div class="card"><div class="empty">계정에 저장된 사업자가 없습니다. 소유자가 기업 화면에서 등록하면 여기 보입니다.</div></div>'}`;
   return `<h1>기업</h1><div class="sub">${CUSTOM ? `사업자 ${COS.list.length}곳 · 선택한 사업자 기준으로 모든 화면이 계산됩니다 · ${coSyncBadge()}` : '기본 정보 5가지만 넣으면 추천이 시작됩니다'}</div>
-  ${CO_SYNC.err && ADM.noLogin ? `<div class="notice">${h(CO_SYNC.err)} — 이 브라우저에만 저장됩니다.</div>` : ''}
+  ${coDiag()}
   ${COS.list.map(companyCard).join('')}
   ${CO_SYNC.on && COS.list.length ? `<div class="flex" style="margin:0 0 12px"><button type="button" class="btn" data-cosync="1" ${CO_SYNC.busy ? 'disabled' : ''}>${CO_SYNC.busy ? '저장 중…' : '계정에 저장'}</button><span class="muted small">${coSyncNote()}</span></div>` : ''}
   <div class="card" style="margin-top:14px;border-style:dashed" id="co-new"><h2 style="border:0;padding:0">${COS.list.length ? '사업자 추가' : '첫 사업자 등록'}</h2>${companyForm(S.coDraft ? { id: 'new', input: S.coDraft } : null)}</div>
@@ -1308,7 +1314,7 @@ function initCoSync() {
     const first = !CO_SYNC.loaded; CO_SYNC.loaded = true;
     if (JSON.stringify(COS.list.map(c => [c.id, c.input])) !== before) { saveCos(); AI.company = null; refreshCompanies(); if (first && remote.length) toast(`계정에 저장된 사업자 ${remote.length}곳을 불러왔습니다`); }
     render();
-  }, () => { CO_SYNC.err = '계정 저장소를 읽지 못했습니다 — 이 브라우저에만 저장'; render(); });
+  }, e => { CO_SYNC.err = e && e.code === 'not_granted' ? '데이터 읽기 권한이 거절됨 — 권한 설정에서 허용하세요' : '계정 저장소를 읽지 못했습니다 (' + ((e && e.code) || '오류') + ')'; render(); });
 }
 let SAVING = false;
 async function saveSlots(slots, msg) { if (SAVING) return; SAVING = true; try { await DB.doc('tokens/slots').set({ slots, updatedAt: new Date().toISOString(), updatedBy: ADM.me }); if (msg) toast(msg); } catch (e) { toast(e.code === 'invalid_argument' ? '토큰은 편집자(Editor) 권한이 있어야 바꿀 수 있습니다' : '저장하지 못했습니다'); } SAVING = false; }
@@ -1514,6 +1520,7 @@ function bind() {
   on('[data-coedit]', 'click', e => { const id = e.currentTarget.dataset.coedit; S.coEdit = S.coEdit === id ? null : id; S.delArm = null; render(); const el = document.getElementById('co-' + id); if (el && S.coEdit) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
   on('[data-cosel]', 'click', e => { COS.active = e.currentTarget.dataset.cosel; S.delArm = null; saveCos(); AI.company = null; refreshCompanies(); render(); toast(`${coName(activeCo(), COS.list.indexOf(activeCo()))} 기준으로 다시 매칭했습니다`); });
   on('[data-coadd]', 'click', () => { S.view = 'co'; render(); const nf = document.getElementById('co-new'); if (nf) { nf.scrollIntoView({ block: 'start', behavior: 'smooth' }); const f = nf.querySelector('[name=f_name]'); if (f) f.focus(); } });
+  on('[data-perm]', 'click', async () => { try { const pm = await window.claude.use('permissions'); if (pm && pm.manage) await pm.manage(); else toast('페이지 오른쪽 위 메뉴의 권한(Permissions)에서 데이터 읽기를 허용하세요'); } catch (e) { toast('페이지 오른쪽 위 메뉴의 권한(Permissions)에서 데이터 읽기를 허용하세요'); } });
   on('[data-cosync]', 'click', () => { const nf = document.querySelector('#co-new form.coform'); if (nf) { const inp = readForm(nf); if (inp['기업명'] || inp['업종'] || inp['설립일']) { nf.requestSubmit(); return; } } syncAll(); });
   on('[data-cojson]', 'click', async e => { const a = COS.list.find(c => c.id === e.currentTarget.dataset.cojson); if (!a) return; const name = `${(a.input['기업명'] || 'company').replace(/[\\/:*?"<>|\s]+/g, '_')}.json`, data = JSON.stringify(a.input, null, 2);
     if (DL) { try { await DL.save({ filename: name, data }); toast('저장했습니다 — knowledge/company/ 에 넣으면 마감 알림 대상이 됩니다'); return; } catch (e) { if (e && e.code === 'cancelled') return; } }
