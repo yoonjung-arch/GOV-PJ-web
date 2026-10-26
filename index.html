@@ -1270,12 +1270,13 @@ async function initAdmin() {
   initCoSync();
   initQA();
   initEvents();
+  if (!ADM.isOwner) { try { DB.collection('invites').where('uid', '==', ADM.me).onSnapshot(s => { if (s.docs && s.docs.length) { AUTOJOIN_DONE = false; autoJoin(); } }, () => {}); } catch (e) {} }
   const fail = e => { ADM.err = e && e.code === 'revoked' ? '' : '데이터를 불러오지 못했습니다.'; render(); };
   DB.doc('org/masters').onSnapshot(s => { ADM.masters = (s.exists && s.data().ids) || []; render(); }, fail);
   DB.collection('members').onSnapshot(s => { ADM.members = s.docs.map(d => ({ id: d.id, ...d.data() })); autoJoin(); autoApprove(); render(); }, fail);
   if (ADM.me) DB.doc('requests/' + ADM.me).onSnapshot(s => { ADM.myReq = s.exists ? s.data() : null; render(); }, () => {});
   if (ADM.isOwner || ADM.canEdit) {
-    DB.collection('invites').onSnapshot(s => { INV.list = s.docs.map(d => ({ id: d.id, ...d.data() })); autoApprove(); render(); }, () => {});
+    DB.collection('invites').onSnapshot(s => { INV.list = s.docs.map(d => ({ id: d.id, ...d.data() })); autoResolve(); autoApprove(); render(); }, () => {});
     DB.doc('tokens/slots').onSnapshot(s => { ADM.slots = (s.exists && s.data().slots) || []; render(); }, fail);
     DB.collection('requests').onSnapshot(s => { ADM.requests = s.docs.map(d => ({ id: d.id, ...d.data() })); autoApprove(); render(); }, fail);
   }
@@ -1323,6 +1324,15 @@ async function autoJoin() {
     if (!inv) { const q = await DB.collection('invites').where('uid', '==', ADM.me).limit(1).get(); if (q.docs && q.docs.length) inv = { id: q.docs[0].id, ...q.docs[0].data() }; }
     if (!inv || inv.status === 'done') return;
     await DB.doc('requests/' + ADM.me).set({ code: 'INVITE', company: inv.company || '', bno: '', email: inv.id, uid: ADM.me, role: inv.role || '멤버', auto: true, at: new Date().toISOString() }); } catch (e) {}
+}
+// 관리자 쪽: '계정 미확인' 초대는 볼 때마다 다시 검색 — 상대가 공유 초대를 수락하고 로그인하면 그때부터 검색에 잡힌다
+let RESOLVING = false;
+async function autoResolve(force) {
+  if (RESOLVING || !USER || !USER.search || !(ADM.isOwner || ADM.canEdit)) return;
+  const todo = INV.list.filter(i => !i.uid && i.status !== 'done' && (force || !i.checkedAt || Date.now() - Date.parse(i.checkedAt) > 10 * 60 * 1000));
+  if (!todo.length) return; RESOLVING = true;
+  for (const i of todo) { try { const hits = (await USER.search(i.id)) || []; const hit = hits.find(x => invKey(x.email) === i.id) || (hits.length === 1 ? hits[0] : null); await DB.doc('invites/' + i.id).update(hit ? { uid: hit.id, checkedAt: new Date().toISOString() } : { checkedAt: new Date().toISOString() }); } catch (e) {} }
+  RESOLVING = false;
 }
 // 관리자 쪽: 이메일 초대로 들어온 요청은 승인 버튼 없이 자동 승인
 let APPROVING = false;
@@ -1459,8 +1469,8 @@ function viewAdm() {
     body = `<p class="small">이메일을 넣으면 초대가 기록되고 메일 앱이 열립니다(메일 내용은 자동 작성). 받은 사람은 <b>본인 claude.ai 계정으로 로그인해 링크를 열기만</b> 하면 되고, 코드 입력 없이 자동으로 구성원이 됩니다. 페이지 자체를 열 수 있는지는 claude.ai 공유 메뉴(링크 공개 또는 이메일 추가)가 정합니다.</p>
       <div class="flex" style="margin:8px 0 14px"><input class="inp" id="inv-email" type="email" placeholder="이메일" style="flex:1;min-width:220px"><select class="inp" id="inv-role">${roles.map(r => `<option ${r === '멤버' ? 'selected' : ''}>${r}</option>`).join('')}</select><input class="inp" id="inv-co" placeholder="회사명(선택)" style="width:160px"><button class="btn pri" data-invite="1" ${INV.busy ? 'disabled' : ''}>초대하고 메일 열기</button><a class="btn" href="${SEND_INVITE_URL}" target="_blank" rel="noopener" title="SMTP Secrets 가 있어야 보내집니다">메일 자동 발송 (GitHub)</a></div>
       <p class="muted small">메일 열기 = 내 메일 앱에서 보내기. 메일 자동 발송 = GitHub 폼에 이메일·역할을 넣으면 서버가 보냄(저장소 Secrets 에 SMTP_HOST·SMTP_USER·SMTP_PASS 필요, Gmail 은 앱 비밀번호). 둘 다 받는 사람이 할 일은 같습니다.</p>
-      ${INV.list.length ? `<table><thead><tr><th>이메일</th><th>역할</th><th>회사</th><th>상태</th><th class="hide-m">초대한 사람</th><th></th></tr></thead><tbody>${INV.list.sort((a, b) => String(b.at).localeCompare(String(a.at))).map(i => `<tr><td>${h(i.id)}</td><td>${h(i.role)}</td><td>${h(i.company || '-')}</td><td>${i.status === 'done' ? `<span class="tag ok">가입 완료</span>` : i.uid ? '<span class="tag warn">미접속 · 계정 확인됨</span>' : '<span class="tag warn">미접속 · 계정 미확인(가입 후 다시 초대)</span>'}</td><td class="hide-m small">${h(nameOf(i.by))} · ${h((i.at || '').slice(0, 10))}</td>
-        <td><a class="btn" href="${inviteMail(i.id, i.role, i.company).href}" style="padding:2px 8px">메일 다시</a> <button class="btn" data-invcopy="${h(i.id)}" style="padding:2px 8px">안내문 복사</button> <button class="btn" data-invdel="${h(i.id)}" style="padding:2px 8px">취소</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">아직 초대한 사람이 없습니다.</div>'}`;
+      ${INV.list.length ? `<table><thead><tr><th>이메일</th><th>역할</th><th>회사</th><th>상태</th><th class="hide-m">초대한 사람</th><th></th></tr></thead><tbody>${INV.list.sort((a, b) => String(b.at).localeCompare(String(a.at))).map(i => `<tr><td>${h(i.id)}</td><td>${h(i.role)}</td><td>${h(i.company || '-')}</td><td>${i.status === 'done' ? `<span class="tag ok">가입 완료</span>` : i.uid ? '<span class="tag warn">미접속 · 계정 확인됨</span>' : '<span class="tag warn">미접속 · 계정 미확인 (상대가 공유 초대 수락·로그인하면 자동 확인)</span>'}</td><td class="hide-m small">${h(nameOf(i.by))} · ${h((i.at || '').slice(0, 10))}</td>
+        <td>${!i.uid && i.status !== 'done' ? `<button class="btn" data-invcheck="1" style="padding:2px 8px">계정 다시 확인</button> ` : ''}<a class="btn" href="${inviteMail(i.id, i.role, i.company).href}" style="padding:2px 8px">메일 다시</a> <button class="btn" data-invcopy="${h(i.id)}" style="padding:2px 8px">안내문 복사</button> <button class="btn" data-invdel="${h(i.id)}" style="padding:2px 8px">취소</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">아직 초대한 사람이 없습니다.</div>'}`;
   } else if (ADM.tab === 'slots') {
     body = slots.length ? `<div class="muted small" style="margin-bottom:8px">발급 ${issued} · 사용 중 ${used} · 빈 슬롯 ${slots.filter(s => !s.status || s.status === 'empty').length}. 코드를 받은 사람은 설정 화면의 "초대 코드 등록"에 입력합니다.</div>
       <div style="overflow:auto"><table><thead><tr><th>#</th><th>코드</th><th>역할</th><th>회사</th><th class="hide-m">사용자</th><th class="hide-m">발급</th><th>상태</th></tr></thead><tbody>${slots.map(slotRow).join('')}</tbody></table></div>`
@@ -1511,6 +1521,7 @@ function bindAdmin(on) {
     try { await DB.doc('invites/' + email).set({ email, role, company, uid, by: ADM.me, at: new Date().toISOString(), status: 'sent' }); const m = inviteMail(email, role, company); window.open(m.href, '_blank'); try { await navigator.clipboard.writeText(m.body + '\n' + PAGE_URL); } catch (x) {} toast('초대를 기록했습니다 · 메일 앱이 열립니다 (안내문은 클립보드에도 복사됨)'); }
     catch (e) { toast('초대를 저장하지 못했습니다 (편집자 권한 필요)'); }
     INV.busy = false; render(); });
+  on('[data-invcheck]', 'click', async () => { await autoResolve(true); toast('계정을 다시 확인했습니다'); });
   on('[data-invcopy]', 'click', async e => { const i = INV.list.find(x => x.id === e.currentTarget.dataset.invcopy); if (!i) return; try { await navigator.clipboard.writeText(inviteMail(i.id, i.role, i.company).body); toast('안내문을 복사했습니다'); } catch (x) { toast('복사하지 못했습니다'); } });
   on('[data-invdel]', 'click', async e => { try { await DB.doc('invites/' + e.currentTarget.dataset.invdel).delete(); toast('초대를 취소했습니다'); } catch (x) { toast('취소하지 못했습니다'); } });
   on('[data-mkslots]', 'click', () => saveSlots(Array.from({ length: SLOT_N }, () => ({ status: 'empty' })), `슬롯 ${SLOT_N}개를 만들었습니다`));
