@@ -626,7 +626,7 @@ document.addEventListener('pointermove', e => {
 function connBanner() {   // claude.ai 안에서 계정 저장소 연결 상태 — 사업자가 안 보이는 원인을 첫 화면에서 바로 알린다
   if (!window.claude || typeof window.claude.use !== 'function') return '';
   if (CO_SYNC.loaded && !CO_SYNC.err) return '';
-  if (SEEDED && (ADM.noLogin || CO_SYNC.err)) return `<div class="warnline" style="background:var(--brand-soft);color:var(--ink)"><span>관리자가 등록한 사업자 ${COS.list.length}곳을 게시본 기준으로 보고 있습니다 (계정 연결 없음 — 수정·공유 저장은 claude.ai 로그인 후). ${h(CO_SYNC.err || '')}</span><span class="flex" style="gap:6px"><button class="btn" data-perm="1">권한 설정</button><button class="btn" data-reload="1">다시 연결</button></span></div>`;
+  if (SEEDED && (ADM.noLogin || CO_SYNC.err)) return `<div class="warnline" style="background:var(--brand-soft);color:var(--ink)"><span>관리자가 등록한 사업자 ${COS.list.length}곳을 보고 있습니다 (매일 아침·사업자 변경 시 갱신). 보기만 가능하고, 여기서 고친 내용은 이 브라우저에만 남습니다.</span><span class="flex" style="gap:6px"><button class="btn" data-perm="1">권한 설정</button><button class="btn" data-reload="1">다시 연결</button></span></div>`;
   const why = ADM.noLogin ? (ADM.useTimeout ? 'claude.ai 연결이 15초 안에 응답하지 않았습니다. 새로고침하거나 권한 허용 창이 떠 있는지 확인하세요.' : 'claude.ai 로그인이 안 되었거나 권한 허용을 건너뛰었습니다. 로그인 후 새로고침하고 허용 창에서 허용을 누르세요.')
     : CO_SYNC.err ? CO_SYNC.err : ADM.ready ? '계정에 저장된 사업자를 읽는 중입니다…' : '계정 연결 확인 중입니다… (권한 허용 창이 뜨면 허용)';
   return `<div class="warnline" style="background:${ADM.noLogin || CO_SYNC.err ? 'var(--bad-soft)' : 'var(--brand-soft)'};color:${ADM.noLogin || CO_SYNC.err ? 'var(--bad)' : 'var(--ink)'}"><span>${ADM.noLogin || CO_SYNC.err ? '⚠ ' : ''}${h(why)}</span><span class="flex" style="gap:6px"><button class="btn" data-perm="1">권한 설정</button><button class="btn" data-reload="1">다시 연결</button></span></div>`;
@@ -643,7 +643,8 @@ function render() {
 }
 
 // ───────── 대시보드 ─────────
-function keyAlert() {
+function keyAlert() {   // 운영자(소유자·편집자)에게만, 또는 claude.ai 밖(로컬 점검)에서만
+  if (window.claude && !(ADM.isOwner || ADM.canEdit)) return '';
   const bad = D.keys.filter(k => ['만료', '미등록', '활용신청'].includes(k.status));
   return bad.length ? `<div class="warnline" style="background:var(--bad-soft);color:var(--bad)"><span>⚠ API 키 문제: ${bad.map(k => `${h(k.name)} ${h(k.status)}`).join(', ')} — 수집이 멈출 수 있습니다</span><button class="btn" data-nav2="set">설정 보기</button></div>` : '';
 }
