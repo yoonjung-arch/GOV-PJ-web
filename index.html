@@ -1414,16 +1414,27 @@ function coSyncNote() {
   return `사업자 ${COS.list.length}곳 · ${coSyncBadge()}${CO_SYNC.at ? ` · 마지막 저장 ${CO_SYNC.at.slice(5, 16).replace('T', ' ')}` : ''}`;
 }
 const coDoc = c => ({ input: c.input, at: new Date().toISOString(), by: ADM.me });
+// 사업자가 바뀌면 게시본도 바뀌어야 링크만 연 사람에게 보인다 → 편집자가 저장할 때 댓글을 Claude 에게 보내 재게시를 요청 (comments 기능, 2분에 한 번)
+let CMT = null; const REPUB = { last: 0 };
+async function requestRepublish(why) {
+  if (!CMT || Date.now() - REPUB.last < 120000) return;
+  try {
+    if ((await CMT.canSendToClaude()) !== 'available') return;
+    const el = document.querySelector('.logo') || document.body; const anchor = await CMT.anchorFor(el);
+    await CMT.sendToClaude({ anchor, text: `[자동 요청] 사업자 변경 — 게시본 갱신 필요: ${why} (${new Date().toISOString().slice(0, 16).replace('T', ' ')})` });
+    REPUB.last = Date.now(); toast('게시본 갱신을 요청했습니다 — 몇 분 안에 링크로 보는 사람에게도 반영됩니다');
+  } catch (e) { /* consent_required·claude_unavailable 등: 다음 날 아침 자동 재게시에 반영 */ }
+}
 async function pushCo(c) {
   if (!CO_SYNC.on || !c) return;
-  try { const d = coDoc(c); await DB.doc('companies/' + c.id).set(d); CO_SYNC.at = d.at; CO_SYNC.err = ''; toast('계정에 저장했습니다 · 초대된 계정에도 같은 목록이 보입니다'); }
+  try { const d = coDoc(c); await DB.doc('companies/' + c.id).set(d); CO_SYNC.at = d.at; CO_SYNC.err = ''; toast('계정에 저장했습니다 · 초대된 계정에도 같은 목록이 보입니다'); requestRepublish(coName(c, COS.list.indexOf(c)) + ' 저장'); }
   catch (e) { CO_SYNC.err = e && (e.code === 'permission_denied' || e.code === 'not_granted' || e.code === 'invalid_argument') ? '계정 저장 권한 없음(열람 전용) — 이 브라우저에만 저장' : '계정 저장 실패 — 다시 시도'; toast(CO_SYNC.err); render(); }
 }
-async function dropCo(id) { if (!CO_SYNC.on || !CO_SYNC.remote.has(id)) return; try { await DB.doc('companies/' + id).delete(); } catch (e) { toast('계정에서 지우지 못했습니다'); } }
+async function dropCo(id) { if (!CO_SYNC.on || !CO_SYNC.remote.has(id)) return; try { await DB.doc('companies/' + id).delete(); requestRepublish('사업자 삭제'); } catch (e) { toast('계정에서 지우지 못했습니다'); } }
 async function syncAll() {
   if (!CO_SYNC.on || CO_SYNC.busy) return;
   CO_SYNC.busy = true; render(); let n = 0;
-  try { for (const c of COS.list) { const d = coDoc(c); await DB.doc('companies/' + c.id).set(d); CO_SYNC.at = d.at; n++; } CO_SYNC.err = ''; toast(`사업자 ${n}곳을 계정에 저장했습니다 · 초대된 계정에도 보입니다`); }
+  try { for (const c of COS.list) { const d = coDoc(c); await DB.doc('companies/' + c.id).set(d); CO_SYNC.at = d.at; n++; } CO_SYNC.err = ''; toast(`사업자 ${n}곳을 계정에 저장했습니다 · 초대된 계정에도 보입니다`); requestRepublish(`사업자 ${n}곳 일괄 저장`); }
   catch (e) { CO_SYNC.err = '계정 저장 권한 없음(열람 전용) — 이 브라우저에만 저장'; toast(CO_SYNC.err); }
   CO_SYNC.busy = false; render();
 }
@@ -1878,6 +1889,7 @@ render();
 if (window.claude && typeof window.claude.use === 'function') {
   window.claude.use('sample').then(s => { if (s) { SAMPLE = s; render(); s.limits().then(l => { QA.toolsOk = !!(l && l.tools); render(); }).catch(() => {}); } }).catch(() => {});
   window.claude.use('downloads').then(d => { if (d) DL = d; }).catch(() => {});
+  window.claude.use('comments').then(c => { if (c) CMT = c; }).catch(() => {});
   initAdmin();
 }
 </script>
